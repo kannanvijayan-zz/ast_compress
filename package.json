@@ -1,0 +1,19 @@
+{
+  "name": "ast-compress",
+  "version": "0.1.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "tokens": "node index.js --tokens",
+    "ast": "node index.js --ast",
+    "lifted": "node index.js --lifted",
+    "type-sorted": "node index.js --type-sorted",
+    "compress": "node index.js --compress"
+  },
+  "author": "Kannan Vijayan <kannan@vijayan.ca>",
+  "license": "GPLv3",
+  "dependencies": {
+    "esprima": ">=4.0.0"
+  }
+}
