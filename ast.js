@@ -3,6 +3,8 @@
 
 const assert = require('assert');
 
+const encoder = require('./encoder');
+
 function getOr(obj, prop, other) {
     return ((typeof(obj) == 'object') && (prop in obj))
             ? obj[prop]
@@ -90,6 +92,11 @@ class NodeType {
         return node_obj ? NodeType.mustLiftObj(node_obj) : null;
     }
 
+    typeCode() {
+        assert(this.name in NodeType.N);
+        return NodeType.E[this.name];
+    }
+
     eachLiftedFieldInObj(node_obj, cb) {
         this.eachRawFieldInObj(node_obj, (fl, value) => {
             cb(fl.name, new Field(fl, value));
@@ -108,6 +115,7 @@ class NodeType {
                     if (br.opt) {
                         cb(br.name, NodeType.maybeLiftObj(value));
                     } else {
+                        // console.log("KVKV lifting non-opt: " + br.name + " of " + node_obj.type + " at " + JSON.stringify(node_obj.loc));
                         cb(br.name, NodeType.mustLiftObj(value));
                     }
                 }
@@ -144,15 +152,7 @@ class NodeType {
         }
     }
 
-    verifyNode(node) {
-        // Do no verification on unknown nodes.
-        if (this.name == NodeType.N.Unknown) {
-            return;
-        }
-
-        // Ensure that there are no names on node_obj aside
-        // from `type` or a named field.
-        const node_obj = node.node_obj;
+    verifyRawNodeObj(node_obj) {
         const seen = new Set();
         const type = node_obj.type;
         for (let name in node_obj) {
@@ -224,6 +224,9 @@ class BaseNode {
             delete node_obj[db.name];
         }
 
+        // Verify the node.
+        type.verifyRawNodeObj(node_obj);
+
         this.lifted_fields = new Map();
         type.eachLiftedFieldInObj(node_obj, (name, field) => {
             this.lifted_fields.set(name, field);
@@ -246,7 +249,6 @@ class BaseNode {
 
         this.attrs = attrs;
         Object.freeze(this);
-        this.verify();
     }
 
     depthFirstNumber() {
@@ -255,6 +257,7 @@ class BaseNode {
     depthFirstNumberFrom_(num, depth) {
         this.attrs.number = num;
         this.attrs.depth = depth;
+        console.log("KVKV - ASSIGNED number to " + this.summaryString());
         let n = num + 1;
         this.forEachChild((child, name) => {
             if (Array.isArray(child)) {
@@ -274,10 +277,6 @@ class BaseNode {
 
     typeString() {
         return this.node_obj.type;
-    }
-
-    verify() {
-        this.type.verifyNode(this);
     }
 
     numFields() {
@@ -302,9 +301,12 @@ class BaseNode {
     forEachChild(cb) {
         this.lifted_children.forEach(cb);
     }
+    getField(name) {
+        return this.lifted_fields.get(name);
+    }
 
     summaryString() {
-        let str = `${this.type.name}`;
+        let str = `${this.type.name}(code=${this.type.typeCode()})`;
         if (Number.isInteger(this.attrs.number)) {
             str += ` [${this.attrs.number}]/D${this.attrs.depth}`;
         }
@@ -465,7 +467,7 @@ class Unknown extends BaseNode {
                                                           'block,handler,?finalizer'),
         makeNodeType('CatchClause',         'Catch',      '',                 'param,body'),
         makeNodeType('ForStatement',        'ForStmt',    '',
-                                                          '?init,test,?update,body'),
+                                                          '?init,?test,?update,body'),
         makeNodeType('ForInStatement',      'ForInStmt',  'each',             'left,right,body'),
         makeNodeType('WhileStatement',      'WhileStmt',  '',                 'test,body'),
         makeNodeType('DoWhileStatement',    'DoWhileStmt','',                 'body,test'),
@@ -475,7 +477,7 @@ class Unknown extends BaseNode {
         makeNodeType('EmptyStatement',      'Empty',      '',                 ''),
         makeNodeType('ThrowStatement',      'Throw',      '',                 'argument'),
         makeNodeType('SwitchStatement',     'Switch',     '',                 'discriminant,*cases'),
-        makeNodeType('SwitchCase',          'Case',       '',                 'test,*consequent'),
+        makeNodeType('SwitchCase',          'Case',       '',                 '?test,*consequent'),
 
         makeNodeType('LogicalExpression',   'LogicExpr',  'operator',         'left,right'),
         makeNodeType('ReturnStatement',     'RetStmt',    '',                 '?argument'),
@@ -487,14 +489,18 @@ class Unknown extends BaseNode {
     const node_type_map = {};
     const node_type_classes = {};
     const node_type_names = {};
+    const node_type_encode = {};
+    let cur_code = encoder.FIRST_NODE_TYPE_CODE;
     for (let nt of node_type_list) {
         node_type_map[nt.name] = nt;
         node_type_classes[nt.name] = nt.gen_cls;
         node_type_names[nt.name] = nt.name;
+        node_type_encode[nt.name] = cur_code++;
     }
     NodeType.T = node_type_map;
     NodeType.C = node_type_classes;
     NodeType.N = node_type_names;
+    NodeType.E = node_type_encode;
 })();
 
 module.exports = {

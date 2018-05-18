@@ -87,6 +87,7 @@ class DepthCache {
                     depth_str = `${cur_depth}=TMPL.-${-depth_delta}`;
                 }
                 matches.push({ref:`${depth_str}.${rev_i}`,
+                              depth_delta, rev_i,
                               benefit: prior_template.benefit,
                               prior_template, cuts});
             }
@@ -140,6 +141,7 @@ class DepthCache {
                     depth_str = `${cur_depth}=-${-depth_delta}`;
                 }
                 matches.push({ref:`${depth_str}.${rev_i}`, prior_tree,
+                              depth_delta, rev_i,
                               benefit, step_count, cut_count, cuts,
                               template});
             }

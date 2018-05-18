@@ -3,8 +3,10 @@
 
 const assert = require('assert');
 const esprima = require('esprima');
+const fs = require('fs');
 
 const {DepthCache} = require('./depth_cache');
+const {StringTable, Encoder} = require('./encoder');
 const ast = require('./ast');
 
 function jsonStr(obj, pretty) {
@@ -67,11 +69,40 @@ function compress(js_str) {
     // Walk and print the AST.
     //prePostWalk(lifted_ast, printVisitor);
 
+    // TODO: fill string table.
+    const string_table = new StringTable();
+    prePostWalk(lifted_ast, makeStringTableVisitor(string_table));
+    string_table.finish();
+
+    const encoder = new Encoder();
+    encoder.writeStringTable(string_table);
+
     // Make a type-sorted index of all the subtrees.
-    prePostWalk(lifted_ast, makeCompressVisitor());
+    prePostWalk(lifted_ast, makeCompressVisitor(encoder));
+    encoder.dump();
+
+    fs.writeFileSync("/tmp/COMPRESSED", encoder.byteArray());
 }
 
-function makeCompressVisitor() {
+function makeStringTableVisitor(string_table) {
+    return function (when, node, attrs) {
+        if (when != 'begin') {
+            return;
+        }
+        assert(node && node.type);
+        if (node.type.name == 'Identifier') {
+            const name = node.fieldMap().get('name');
+            assert(name && (typeof(name.value) == 'string'));
+            string_table.addIdentifier(name.value);
+        } else {
+            node.forEachField((field, name) => {
+                string_table.addValueRecursive(field.value);
+            });
+        }
+    }
+};
+
+function makeCompressVisitor(encoder) {
     let depth_cache = new DepthCache();
 
     // This is a map of nodes to templates, so that
@@ -89,9 +120,23 @@ function makeCompressVisitor() {
             // in the cache.
             const match = depth_cache.search(node.attrs.depth, node);
             if (!match.ref) {
-                return;
+                const children = [];
+                // No prior subtree matches, write the node directly
+                // then return.
+                encoder.writeDirectNode(node);
+                node.forEachChild((ch, nm) => {
+                    if (Array.isArray(ch)) {
+                        for (let i = 0; i < ch.length; i++) {
+                            children.push({name: nm + '.' + i,
+                                           child: ch[i]});
+                        }
+                    } else {
+                        children.push({name: nm, child: ch});
+                    }
+                });
+                return children;
             }
-            const {ref, prior_tree, prior_template,
+            const {ref, depth_delta, rev_i, prior_tree, prior_template,
                    benefit, cuts} = match;
             let {step_count, cut_count, template} = {};
             if (match.prior_template) {
@@ -108,9 +153,11 @@ function makeCompressVisitor() {
             if (prior_tree) {
                 console.log(`        ${prior_tree.summaryString()} - ` +
                             prior_tree.toString().replace(/\n/, '\n        '));
+                encoder.writeSubtreeRef(depth_delta, rev_i, cuts.map(c => c.num));
             } else {
                 console.log(`        ${prior_template.tree.summaryString()}` +
                             prior_template.tree.toString().replace(/\n/, '\n        '));
+                encoder.writeTemplateRef(depth_delta, rev_i);
             }
             const children = [];
             cuts.forEach((cut, i) => {
@@ -230,7 +277,14 @@ function prePostWalkHelper(node, cb, attrs) {
     if (!Array.isArray(children)) {
         children = [];
         node.forEachChild((child, name) => {
-            children.push({name, child});
+            if (Array.isArray(child)) {
+                for (let i = 0; i < child.length; i++) {
+                    children.push({ name: name + '.' + i,
+                                    child: child[i] });
+                }
+            } else {
+                children.push({name, child});
+            }
         });
     }
 

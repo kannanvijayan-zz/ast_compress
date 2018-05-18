@@ -48,9 +48,6 @@ class Template {
         }
         return cuts;
     }
-
-    toString() {
-    }
 }
 
 class Cut {
