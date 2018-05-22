@@ -28,6 +28,26 @@ class DepthCache {
         return this.depth_caches[depth];
     }
 
+    useSubtreeEntry(depth, rev_index) {
+        assert(depth < this.depth_caches.length);
+        const arr = this.depth_caches[depth].trees;
+        assert(rev_index < arr.length);
+        const index = (arr.length - rev_index) - 1;
+        assert(index < arr.length);
+        console.log(`KVKV USE SUBTREE: d=${depth} ri=${rev_index} i=${index}`);
+        arr.push(arr.splice(index, 1)[0]);
+    }
+
+    useTemplateEntry(depth, rev_index) {
+        assert(depth < this.depth_caches.length);
+        const arr = this.depth_caches[depth].templates;
+        assert(rev_index < arr.length);
+        const index = (arr.length - rev_index) - 1;
+        assert(index < arr.length);
+        console.log(`KVKV USE TEMPLATE: d=${depth} ri=${rev_index} i=${index}`);
+        arr.push(arr.splice(index, 1)[0]);
+    }
+
     search(depth, tree) {
         const template_result = this.templateSearch_(depth, tree);
         const tree_result = this.treeSearch_(depth, tree);

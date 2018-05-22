@@ -17,21 +17,6 @@ function jsonStr(obj, pretty) {
     }
 }
 
-/**
- * Notes on compression.  Relative-path can be
- * described as composition of:
- *      - Parent [move to parent]
- *      - Child [move to last child]
- *      - Sibling [move to previous sibling]
- *      - Nop [nothing]
- *
- * This can be encoded in 2 bits.  A var-length
- * encoding can pack paths of length `3 + 4*(b-1)`
- * in a sequence of `b` bytes.
- *
- * This is used in the calculation of whether to
- * emit a backreference or not.
- */
 
 function dump_lifted(js_str) {
     const raw_ast = esprima.parseScript(js_str, {});
@@ -90,15 +75,9 @@ function makeStringTableVisitor(string_table) {
             return;
         }
         assert(node && node.type);
-        if (node.type.name == 'Identifier') {
-            const name = node.fieldMap().get('name');
-            assert(name && (typeof(name.value) == 'string'));
-            string_table.addIdentifier(name.value);
-        } else {
-            node.forEachField((field, name) => {
-                string_table.addValueRecursive(field.value);
-            });
-        }
+        node.forEachField((field, name) => {
+            string_table.addValueRecursive(field.value);
+        });
     }
 };
 
@@ -150,18 +129,75 @@ function makeCompressVisitor(encoder) {
             console.log(`${ref}: ${node.summaryString().replace(/ /g, '_')}` +
                         ` BENEFIT:${benefit}` +
                         ` s/c=${step_count}/${cut_count}`);
+            const prior_depth = node.attrs.depth + depth_delta;
             if (prior_tree) {
-                console.log(`        ${prior_tree.summaryString()} - ` +
+                console.log(`        PRIOR ${prior_tree.summaryString()} - ` +
                             prior_tree.toString().replace(/\n/, '\n        '));
                 encoder.writeSubtreeRef(depth_delta, rev_i, cuts.map(c => c.num));
+                depth_cache.useSubtreeEntry(prior_depth, rev_i);
             } else {
-                console.log(`        ${prior_template.tree.summaryString()}` +
+                console.log(`        PRIOR ${prior_template.tree.summaryString()}` +
                             prior_template.tree.toString().replace(/\n/, '\n        '));
                 encoder.writeTemplateRef(depth_delta, rev_i);
+                depth_cache.useTemplateEntry(prior_depth, rev_i);
             }
             const children = [];
             cuts.forEach((cut, i) => {
-                const {reason, num, subst} = cut;
+                const {reason, cut_kind, num, subst} = cut;
+                if (cut_kind === 'top') {
+                    assert('node' in subst);
+                    const type_name = subst.node.type.name;
+                    console.log(`  #CUT Top[${i}]@${num} ${subst.node.summaryString()} - (${reason})`);
+                    children.push({name:ref, child:subst.node});
+
+                } else if (cut_kind == 'fields') {
+                    assert('value_map' in subst);
+                    assert('query_node' in subst);
+
+                    console.log(`  #CUT AllFields[${i}]@${num} - (${reason})`);
+                    subst.value_map.forEach((v, k) => {
+                        const v_str = v.valueString();
+                        console.log(`    * ${k}=${v_str}`);
+                    });
+                    encoder.writeFieldMap(subst.query_node, subst.value_map);
+
+                } else if (cut_kind == 'children') {
+                    assert('node' in subst);
+
+                    console.log(`  #CUT AllChildren[${i}]@${num} - (${reason})`);
+                    subst.node.forEachChild((child, name) => {
+                        if (Array.isArray(child)) {
+                            child.forEach((ch, i) => {
+                                const nm = name + '.' + i;
+                                console.log(`    * ${nm}=${ch.summaryString()}`);
+                                children.push({name:nm, child:ch});
+                            });
+                        } else {
+                            console.log(`    * ${name}=${child.summaryString()}`);
+                            children.push({name, child});
+                        }
+                    });
+
+                } else if (cut_kind == 'child_array') {
+                    assert('node_array' in subst);
+                    console.log(`  #CUT ChildArray[${i}]@${num} - ${reason}`);
+                    subst.node_array.forEach((ch, i) => {
+                        console.log(`    * ${ch.summaryString()}`);
+                        children.push({name:'.' + i, child:ch});
+                    });
+
+                } else if (cut_kind == 'child') {
+                    assert('node' in subst);
+                    const type_name = subst.node ? subst.node.type.name : 'NULL';
+                    const summaryStr = subst.node ? subst.node.summaryString() : 'NULL';
+                    console.log(`  #CutChild[${i}]@${num} ${summaryStr} - (${reason})`);
+                    children.push({name:ref, child:subst.node});
+
+                } else {
+                    throw new Error("Unknown cut_kind: " + cut_kind);
+                }
+
+                /*
                 if (subst.value) {
                     const value_str = subst.value.valueString();
                     console.log(`  #CutField[${i}]@${num} ${value_str} (${reason})`);
@@ -171,6 +207,7 @@ function makeCompressVisitor(encoder) {
                         const v_str = v.valueString();
                         console.log(`    * ${k}=${v_str}`);
                     });
+                    encoder.writeFieldMap(node, subst.value_map);
                 } else if (subst.node) {
                     const type_name = subst.node.type.name;
                     console.log(`  #CutChild[${i}]@${num} ${subst.node.summaryString()} - (${reason})`);
@@ -184,6 +221,7 @@ function makeCompressVisitor(encoder) {
                         console.log(`    ${i} => ${node.summaryString()}`);
                     }
                 }
+                */
             });
             return children;
         } else if (when == 'end') {

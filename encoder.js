@@ -64,6 +64,7 @@ const tree_top = require('./tree_top');
  *      Str                 0001-01SS <B> <B> ... <B>
  *      Array[len>=8]       0010-00SS ...
  *      Array[len<8]        0010-1SSS ...
+ *      Float:              0011-0000
  */
 
 const PRIOR_TREE_CODE = 0;
@@ -89,6 +90,10 @@ const NANO_ARR_TAG = 0x20;
 const NANO_ARR_MAX_LENGTH = 7;
 
 const ARR_TAG = 0x28;
+
+const IDENT_CUTNAME_START_REFS = 26 + 26;
+
+const FLOAT_TAG = 0x30;
 
 function isNanoInt(i) {
     return Number.isInteger(i) && (i >= NANO_INT_MIN) && (i <= NANO_INT_MAX);
@@ -123,17 +128,8 @@ class StringTable {
         }
     }
 
-    addIdentifier(nm) {
-        assert(typeof(nm) == 'string');
-        assert(nm.length > 0);
-        if (nm.length > 1) {
-            this.addString(nm);
-        }
-    }
-
-
     lookup(s) {
-        assert(this.idx_map.has(s), "Looking up string: `" + s + "`");
+        assert(this.idx_map.has(s), "FAILED looking up string: `" + s + "`");
         return this.idx_map.get(s);
     }
 
@@ -193,19 +189,6 @@ class Encoder {
     // Encode a node directly, call callback for
     // encoding of any child subtrees.
     writeDirectNode(node) {
-        if (node.type.name == 'Identifier') {
-            const idname = node.getField('name').value;
-            assert(idname.charCodeAt(0) < 128);
-            if (idname.length == 1) {
-                this.writeVarUint(RAW_IDENT_TYPE_CODE);
-                this.writeU8(idname.charCodeAt(0) & 0xFF);
-            } else {
-                this.writeVarUint(node.type.typeCode());
-                this.writeValue(idname);
-            }
-            return;
-        }
-
         // Write the node's type code.
         this.writeVarUint(node.type.typeCode());
 
@@ -216,8 +199,7 @@ class Encoder {
     }
 
     // Encode a reference to prior tee and a series of
-    // cutpoints, call callback for encoding any substitute
-    // child trees.
+    // cutpoints.
     writeSubtreeRef(rel_depth, rev_index, cuts) {
         assert(rel_depth >= -63 && rel_depth <= 63, "rel_depth=" + rel_depth);
         assert(rev_index <= 255, "rev_index=" + rev_index);
@@ -231,14 +213,21 @@ class Encoder {
     }
 
     // Encode a reference to prior tee and a series of
-    // cutpoints, call callback for encoding any substitute
-    // child trees.
+    // cutpoints.
     writeTemplateRef(rel_depth, rev_index) {
         assert(rel_depth >= -63 && rel_depth <= 63, "rel_depth=" + rel_depth);
         assert(rev_index <= 255, "rev_index=" + rev_index);
         this.writeVarUint(PRIOR_TEMPLATE_CODE);
         this.writeU8(rel_depth);
         this.writeU8(rev_index);
+    }
+
+    // Encode a raw value.
+    writeFieldMap(node, map) {
+        map.forEach((f, n) => {
+            console.log(`LOOKING UP ${f.value} for ${node.type.name}`);
+            this.writeValue(f.value);
+        });
     }
 
     // Encode a raw value.
@@ -253,6 +242,8 @@ class Encoder {
             this.writeU8(nanoIntCode(val));
         } else if (Number.isInteger(val)) {
             this.writeTaggedNum(INT_TAG, val);
+        } else if (typeof(val) == 'number') {
+            this.writeFloat(val);
         } else if (typeof(val) == 'string') {
             this.writeTaggedNum(STR_TAG, this.string_table.lookup(val));
         } else if (Array.isArray(val)) {
@@ -265,8 +256,49 @@ class Encoder {
                 this.writeValue(val[i]);
             }
         } else {
-            assert("Only null, bool, and int values handled.");
+            assert(false, `Unhandled value: ${typeof val} - ${JSON.stringify(val)}`);
         }
+    }
+
+    writeFloat(n) {
+        // Oh my god this is hacky, but we're gonna use some
+        // ecbdic-like repr here.  Digits 0-9, '.', 'e', '+', '-'
+        // fit in 4 bits.
+        assert(typeof(n) == 'number');
+        assert(!Number.isInteger(n));
+        const s = n.toString();
+        const r = [];
+        for (let ch of s) {
+            const ord = ch.charCodeAt(0);
+            const ord_0 = ('0').charCodeAt(0);
+            if ((ord >= ord_0) && (ord <= (ord_0 + 9))) {
+                r.push(ord - ord_0);
+            } else if (ch == '-') {
+                r.push(10);
+            } else if (ch == '+') {
+                r.push(11);
+            } else if (ch == '.') {
+                r.push(12);
+            } else if ((ch == 'e') || (ch == 'E')) {
+                r.push(13);
+            } else {
+                throw new Error("Unknown number char: " + ch);
+            }
+        }
+        r.push(15);
+
+        const v = [];
+        r.forEach((n, i) => {
+            assert((n >= 0) && (n < 16));
+            if ((i % 2) == 0) {
+                v.push(n);
+            } else {
+                v[v.length - 1] |= n << 4;
+            }
+        });
+
+        this.writeU8(FLOAT_TAG);
+        v.forEach(b => this.writeU8(b));
     }
 
     writeTaggedNum(tag, num) {

@@ -115,8 +115,8 @@ class ComputeTemplate {
         // this.callback(num, reason, descr, cut);
     }
 
-    cut_(reason, descr, subst) {
-        const cut = {num:this.number, reason, descr, subst};
+    cut_(reason, cut_kind, descr, subst) {
+        const cut = {num:this.number, reason, cut_kind, descr, subst};
         this.step_(reason, descr, cut);
     }
 
@@ -133,7 +133,7 @@ class ComputeTemplate {
             // The types don't match, cut before node type.
             const descr = `orig_node(${orig_node.type.name}) !=` +
                           ` query_node(${query_node.type.name})`;
-            this.cut_('node_type', descr, {node:query_node});
+            this.cut_('node_type', 'top', descr, {node:query_node});
             return;
         }
 
@@ -154,7 +154,8 @@ class ComputeTemplate {
             // Field names don't match, cut after node type.
             const descr = `orig(${orig_field_keys.join(', ')}) != ` +
                            ` query_node(${query_field_keys.join(', ')})`;
-            this.cut_('field_names', descr, {value_map:query_fields});
+            this.cut_('field_names', 'fields', descr,
+                      {query_node, value_map:query_fields});
             return;
         }
 
@@ -171,8 +172,8 @@ class ComputeTemplate {
                                            .replace(/"/g, "'");
                 const query_str = query_value.valueString()
                                            .replace(/"/g, "'");
-                this.cut_(reason, `${orig_str} != ${query_str}`,
-                          {value:query_value});
+                this.cut_(reason, 'fields', `${orig_str} != ${query_str}`,
+                          {query_node, value_map:query_fields});
                 return;
             }
         });
@@ -190,7 +191,7 @@ class ComputeTemplate {
             // Child branch names don't match, cut all children.
             const descr = `orig(${orig_child_keys.join(', ')}) != ` +
                            ` query_node(${query_child_keys.join(', ')})`;
-            this.cut_('child_names', descr, {node:query_node});
+            this.cut_('child_names', 'children', descr, {node:query_node});
             return;
         }
 
@@ -220,19 +221,19 @@ class ComputeTemplate {
                     // Array child lengths don't match.  Cut
                     const descr = `${child_name}: ${orig_child.length} !=` +
                                   ` ${query_child.length}`;
-                    this.cut_('child_array_length', descr,
+                    this.cut_('child_array_length', 'child_array', descr,
                               {node_array:query_child});
                 }
             } else if(orig_child == null) {
                 if (query_child == null) {
                     this.step_('null_children', `${child_name}`);
                 } else {
-                    this.cut_('notnull_query_child', `${child_name}`,
+                    this.cut_('notnull_query_child', 'child', `${child_name}`,
                               {node:query_child});
                 }
             } else {
                 if (query_child == null) {
-                    this.cut_('null_query_child', `${child_name}`,
+                    this.cut_('null_query_child', 'child', `${child_name}`,
                               {node:query_child});
                 } else {
                     this.step_('check_children', `${child_name}`);
